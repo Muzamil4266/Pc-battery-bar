@@ -1,3 +1,13 @@
+## Charging State
+
+![Charging](Charging.png)
+
+## Rest State
+
+![Rest](Rest.png)
+
+
+
 🔋 PC BATTERY BAR
 
 A lightweight, always-on-top Windows battery indicator that displays your laptop's battery percentage and charging status in real-time. The app sits unobtrusively in the corner of your screen with a sleek dark theme, animated charging indicator, and customizable colors.
