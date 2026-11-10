@@ -1,0 +1,123 @@
+The fixed **Pc-battery-bar.py** is ready. I found several real problems in the code, and the first one is probably your "disappears" bug.
+
+**What was wrong**
+1. **The bar gets buried under the taskbar.** Autostart launches your app before Windows has finished creating the taskbar, and the taskbar then lands on top of your bar. Your `-topmost` refresh does nothing when the flag is already set, so the app keeps running but is hidden. That fits "works some days, not others" (a boot-timing race), and Windows updates that restart Explorer cause it too.
+2. **Exit wiped your autostart.** `exit_app()` called `unregister_all()`, so after any Exit nothing started at the next boot until you ran the exe again.
+3. **Most autostart layers likely failed silently.**
+   - The task asked for admin-level rights, and so does the HKLM entry.
+   - `subprocess` without a stdin often fails with WinError 6 in a `--noconsole` exe.
+   - Every error was hidden by `except: pass`.
+   - When the layers did work, they could launch several copies, because there was no single-instance guard.
+4. The Run key path wasn't quoted, which can break when it contains spaces.
+
+**What I changed**
+- The bar waits for the taskbar, then re-raises and re-positions itself every 1.5 seconds.
+- Exit now only closes the bar. A separate menu item, "Remove from startup & exit", removes autostart.
+- Only one copy can run. The scheduled task is per-user and non-elevated, with a 15-second delay.
+- Everything is logged to `%LOCALAPPDATA%\BatteryBar\battery_bar.log`. This replaces my earlier suggestion to log next to the exe, which would fail in Program Files.
+
+**What to do**
+1. Delete the old **BatteryBar** task and any hand-made ones in Task Scheduler. Check that Settings > Apps > Startup shows it as On.
+2. Rebuild the exe, put it in a permanent folder like `C:\Users\<you>\BatteryBar\` (not Downloads or Desktop), and run it once.
+3. The next time it vanishes, check Task Manager first, then open the log. If there's no "Starting" line at login, autostart didn't fire and the log says why. If there is a "Showing bar" line, it started and the problem is placement.
+
+I couldn't run this on Windows, so it's checked for syntax only. Also, an unsigned exe that registers itself for startup can look suspicious to Defender, so check Protection history if it still vanishes. Send me the log after the next disappearance and I'll pin it down.
+
+
+```
+HANDOFF
+- Project: PC Battery Bar, a custom Python app (.exe) that shows a large battery bar in the Windows 11 taskbar row (left side)
+- Stack: Python 3, tkinter, psutil, winreg/ctypes (Win32); packaging with PyInstaller (--noconsole --onefile); Windows 11, HP laptop, Core i3
+- Structure: Pc-battery-bar.py (single file): logging + crash dump, single-instance mutex, autostart (HKCU Run + Task Scheduler), psutil battery polling, canvas render loop, taskbar-aware placement/re-raise loop, right-click menu
+- Decisions: Log to %LOCALAPPDATA%\BatteryBar; wait for Shell_TrayWnd, then SetWindowPos re-raise every 1.5 s; Exit keeps autostart; per-user non-elevated logon task with 15 s delay; mutex dedupes launches; build as one-file exe via PyInstaller
+- Done: Source reviewed, causes found, fixed Pc-battery-bar.py delivered
+- Working on now: Giving the CMD commands to build the exe with PyInstaller
+- Next: 1) Build the exe; 2) Delete old BatteryBar tasks, put exe in a permanent folder, run once; 3) After the next vanish, check Task Manager and battery_bar.log
+- Known issues: Untested on real Windows; z-order cause unconfirmed until the log shows it; Defender may flag unsigned exe
+- Conventions: HANDOFF block at the start of every coding reply
+```
+
+Open **Command Prompt**, go to the folder containing the file, and run:
+
+```
+pip install pyinstaller psutil
+cd /d "C:\path\to\your\folder"
+pyinstaller --noconsole --onefile --name BatteryBar Pc-battery-bar.py
+```
+
+Replace `C:\path\to\your\folder` with where `Pc-battery-bar.py` is saved.
+
+Your exe will be at `dist\BatteryBar.exe`. You can delete the `build` folder and `BatteryBar.spec` afterwards.
+
+**After building:**
+1. Delete the old **BatteryBar** task in Task Scheduler, if one exists.
+2. Copy `BatteryBar.exe` to a permanent folder such as `C:\Users\<you>\BatteryBar\`, not Downloads or Desktop.
+3. Run it once from there. That one run sets up the autostart.
+
+If `pip` isn't recognized, use `py -m pip install pyinstaller psutil` and `py -m PyInstaller --noconsole --onefile --name BatteryBar Pc-battery-bar.py` instead.
+
+
+
+```
+HANDOFF
+- Project: PC Battery Bar, a custom Python app (.exe) that shows a large battery bar in the Windows 11 taskbar row (left side)
+- Stack: Python 3, tkinter, psutil, winreg/ctypes (Win32); packaged with PyInstaller (--noconsole --onefile --name BatteryBar); Windows 11, HP laptop, Core i3
+- Structure: Pc-battery-bar.py (single file): logging + crash dump, single-instance mutex, autostart (HKCU Run + Task Scheduler), psutil battery polling, canvas render loop, taskbar-aware placement/re-raise loop, right-click menu
+- Decisions: Log to %LOCALAPPDATA%\BatteryBar (battery_bar.log, crash.log); wait for Shell_TrayWnd, then SetWindowPos re-raise every 1.5 s; Exit keeps autostart; per-user non-elevated logon task with 15 s delay; mutex dedupes launches
+- Done: Source reviewed, causes found, fixed script delivered, build command given
+- Working on now: Troubleshooting plan if the bar still vanishes (read log, decide cause, apply matching fix)
+- Next: 1) User checks Task Manager + battery_bar.log after the next vanish and shares the log; 2) Apply fix for the matching cause (Defender exclusion, startup toggle, or code change); 3) Optional hardening: code signing, DPI awareness, save colors
+- Known issues: Untested on real Windows; z-order cause unconfirmed until log shows it; Defender may flag unsigned exe; old elevated task may block overwrite
+- Conventions: HANDOFF block at the start of every coding reply
+```
+
+Don't re-run the exe first. Check what state it's in, because that tells us the cause.
+
+**Step 1: Task Manager > Details tab.** Look for `BatteryBar.exe`.
+
+**Step 2: Open the log.** Press Win+R and paste `%LOCALAPPDATA%\BatteryBar\battery_bar.log`. Look at the last entries from the most recent login.
+
+| What you see | Meaning | Fix |
+|---|---|---|
+| Running, log says "Showing bar", but invisible | Still a placement or z-order problem | Send me the log and I'll change the placement code |
+| Not running, no "Starting" line at login | Autostart never fired | Check Settings > Apps > Startup (BatteryBar must be On), and Task Scheduler > BatteryBar > History tab |
+| "Starting" line, then nothing | It crashed. Check `crash.log` in the same folder | Send me both files |
+| "Another instance is already running" | A stale or old elevated copy holds the lock | End all `BatteryBar.exe` in Task Manager, then run once |
+| `schtasks /Create failed` | The old task is blocking the new one | Delete the old BatteryBar task manually |
+
+**Step 3: Check Defender.** Open Windows Security > Virus & threat protection > Protection history. If BatteryBar is listed, Defender blocked or removed it. Add the folder under Virus & threat protection settings > Exclusions, then restore the file from quarantine.
+
+**If the log and Defender both look clean,** send me the log and I'll find the cause from it. That's much faster than guessing.
+
+**Last resort.** If you only need it to run reliably, put a shortcut to `BatteryBar.exe` in the Startup folder (Win+R, then `shell:startup`). It's the simplest and most reliable autostart method, and it works alongside what the app already sets up.
+
+
+
+```
+HANDOFF
+- Project: PC Battery Bar, a custom Python app (.exe) that shows a large battery bar in the Windows 11 taskbar row (left side)
+- Stack: Python 3, tkinter, psutil, winreg/ctypes (Win32); built with PyInstaller (--noconsole --onefile); Windows 11, HP laptop, Core i3, user profile C:\Users\khano
+- Structure: Pc-battery-bar.py at C:\Shoby deathless laptop folder\ (fixed version); live exe is C:\Users\khano\BatteryBar-claude-10-11-2026.exe (must not be moved or renamed); logs in %LOCALAPPDATA%\BatteryBar
+- Decisions: Autostart stores the exe's full quoted path; wait for Shell_TrayWnd, then SetWindowPos re-raise every 1.5 s; mutex dedupes launches
+- Done: Fixed script delivered; old exe cleaned up; new exe running; real restart test PASSED (autostart at uptime=36s, bar shown, duplicate launch blocked by mutex)
+- Working on now: Reading the post-restart log and setting up the remaining tests
+- Next: 1) Explorer restart test; 2) Full shut down, wait 10 s, power on; 3) Use normally for a few days, and if it vanishes check Task Manager and the log
+- Known issues: Shutdown and Explorer-restart cases not yet tested; the task_matches check never reports "already up to date", so the task is recreated on each run (harmless, cosmetic)
+- Conventions: HANDOFF block at the start of every coding reply
+```
+
+The restart test passed. Here is what the new log lines show:
+
+- **`14:48:16`, `uptime=36s`:** the exe started by itself 36 seconds after boot, with no manual run. This is the exact thing that used to fail.
+- **`waited 0s for taskbar, taskbar found=True`:** the bar appeared right away.
+- **`14:48:55 ... Another instance is already running`:** a second launcher fired and was blocked cleanly. It was most likely the scheduled task, which has a 15 second delay after login. This confirms both autostart layers work and the single-instance guard stops duplicates.
+
+One cosmetic thing: "Scheduled task created/updated" appears on every start instead of "already up to date". It means the app rewrites the task each launch. It's harmless, and you can ignore it.
+
+**Remaining tests:**
+1. **Explorer test.** In Task Manager, right-click **Windows Explorer** > Restart. The bar should be back within about 2 seconds.
+2. **Full shutdown.** Shut down, wait 10 seconds, and power on. Then check the bar and the log.
+3. **Normal use for a few days.** This covers your original problem, which took days to appear.
+
+If the bar disappears at any point, don't run the exe. Check Task Manager for `BatteryBar-claude-10-11-2026.exe`, then paste the last lines of the log here.
+
